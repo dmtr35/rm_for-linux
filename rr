@@ -1,7 +1,8 @@
-#!/bin/bash -x
+#!/bin/bash -x 
 
-current_directory="$PWD"
-current_change=$(echo $PWD | awk '{gsub("/", ":"); print}')
+#current_directory="$PWD"
+#current_change=$(echo $PWD | awk '{gsub("/", ":"); print}')
+#current_change=$($file | awk '{gsub("/", ":"); print}')
 date="$(date +'%d-%m-%Y_%H-%M-%S')"
 id="$SUDO_USER"
 HOME=$(eval echo ~$SUDO_USER)
@@ -16,25 +17,19 @@ fi
 # если нету аргументов, выход
 [ "$#" -eq 0 ] && echo "no filename" && exit
 
-check_slash() {
-	if [[ "$file" == */ ]]; then
-		file=$(echo "$file" | sed 's/\/$//')
-		echo $file  gg
-	fi
-}
 
 check_trash() {
-		if [ -d "$current_directory/$file" ] && [ "$current_directory/$file" == "$trash" ]; then
+		if [ -d "$file" ] && [ "$file" == "$trash" ]; then
 		$rm -rf $trash/*
 		return 1 
 	fi
 }
 
 check_file() {
-	if [ ! -e "$current_directory/$file" ] && [ ! -L "$current_directory/$file" ] && [ "$check_v" == "true" ]; then
+	if [ ! -e "$file" ] && [ ! -L "$file" ] && [ "$check_v" == "true" ]; then
 		echo "Файл '$file' не существует."
 		return 1
-	elif [ ! -e "$current_directory/$file" ] && [ ! -L "$current_directory/$file" ]; then
+	elif [ ! -e "$file" ]&& [ ! -L "$file" ]; then
 		echo "Файл '$file' не существует."
 		return 1
 	fi
@@ -46,26 +41,28 @@ remove_and_save() {
 		# цикл на перемещение и удаление файла
 		for file in "$@"
 		do
-			check_slash "$file"
-			check_trash "$file"
+			filePath=$(realpath -s $file)
+			fileName=$(echo $filePath | awk -F"/" '{print $NF}')
+			current_change=$(echo $filePath | awk '{gsub("/", ":"); print}')
+			fileName_date="${fileName}:${date}"
+			check_trash "$filePath"
 			if [ "$?" -eq 1 ]; then
 				continue 
 			fi
-			check_file "$file"
+			check_file "$filePath"
 			if [ "$?" -ne 0 ]; then
 				continue
 			fi
 			# перед перемещением файла, переименовываем его, добавляя дату
-			file_date="${file}:${date}"
-			tar -czf /$trash/${file_date}_${current_change}.tar.gz $file
+			tar -czf /$trash/${fileName_date}_${current_change}.tar.gz --absolute-names $filePath
 
-			$rm -rf "$file"
+			$rm -rf "$filePath"
 			if [ "$?" -ne 0 ] && [ "$check_v" == "true" ]; then
-				$rm -rf $trash/${file_date}_${current_change}.tar.gz $file
+				$rm -rf $trash/${fileName_date}_${current_change}.tar.gz $filePath
 				echo 'Permission denied'
 				continue
 			elif [ "$check_v" == "true" ]; then
-				echo "removed&save: $file"
+				echo "removed&save: $fileName"
 			fi
 		done
 	fi
@@ -75,7 +72,7 @@ remove() {
 	# цикл на удаление файлов, без сохранения
 	for file in "$@"
 	do
-		check_slash "$file"
+		file=$(realpath -s $file)
 		check_trash "$file"
 		if [ "$?" -eq 1 ]; then
 			continue 
@@ -97,6 +94,7 @@ restore() {
 	# цикл на восстановление каждого файла в свою директорию
 	for file in "$@"
 	do
+		file=$(realpath -s $file)
 		check_file "$file"
 		if [ "$?" -ne 0 ]; then
 			continue
