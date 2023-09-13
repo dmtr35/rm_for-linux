@@ -1,0 +1,199 @@
+#!/bin/bash -x
+
+current_directory="$PWD"
+current_change=$(echo $PWD | awk '{gsub("/", ":"); print}')
+date="$(date +'%d-%m-%Y_%H-%M-%S')"
+id="$SUDO_USER"
+HOME=$(eval echo ~$SUDO_USER)
+trash="$HOME/my_trash"
+hash -r
+rm="$(which -a rm | grep -v home | awk 'NR==1 {print}')"
+
+# проверка есть ли корзина, и создать если нет 
+if [ ! -d "$trash" ]; then
+	mkdir -p "$trash"
+fi
+# если нету аргументов, выход
+[ "$#" -eq 0 ] && echo "no filename" && exit
+
+check_slash() {
+	if [[ "$file" == */ ]]; then
+		file=$(echo "$file" | sed 's/\/$//')
+		echo $file  gg
+	fi
+}
+
+check_trash() {
+		if [ -d "$current_directory/$file" ] && [ "$current_directory/$file" == "$trash" ]; then
+		$rm -rf $trash/*
+		return 1 
+	fi
+}
+
+check_file() {
+	if [ ! -e "$current_directory/$file" ] && [ ! -L "$current_directory/$file" ] && [ "$check_v" == "true" ]; then
+		echo "Файл '$file' не существует."
+		return 1
+	elif [ ! -e "$current_directory/$file" ] && [ ! -L "$current_directory/$file" ]; then
+		echo "Файл '$file' не существует."
+		return 1
+	fi
+}
+
+
+remove_and_save() {
+	if [ "$#" -ge 1 ]; then
+		# цикл на перемещение и удаление файла
+		for file in "$@"
+		do
+			check_slash "$file"
+			check_trash "$file"
+			if [ "$?" -eq 1 ]; then
+				continue 
+			fi
+			check_file "$file"
+			if [ "$?" -ne 0 ]; then
+				continue
+			fi
+			# перед перемещением файла, переименовываем его, добавляя дату
+			file_date="${file}:${date}"
+			tar -czf /$trash/${file_date}_${current_change}.tar.gz $file
+
+			$rm -rf "$file"
+			if [ "$?" -ne 0 ] && [ "$check_v" == "true" ]; then
+				$rm -rf $trash/${file_date}_${current_change}.tar.gz $file
+				echo 'Permission denied'
+				continue
+			elif [ "$check_v" == "true" ]; then
+				echo "removed&save: $file"
+			fi
+		done
+	fi
+}
+
+remove() {
+	# цикл на удаление файлов, без сохранения
+	for file in "$@"
+	do
+		check_slash "$file"
+		check_trash "$file"
+		if [ "$?" -eq 1 ]; then
+			continue 
+		fi
+		check_file "$file"
+		if [ "$?" -ne 0 ]; then
+			continue
+		fi
+		$rm -rf "$file"
+		if [ "$check_v" == "true" ]; then 
+			echo "removed: $file"
+		fi
+
+
+	done
+}
+
+restore() {
+	# цикл на восстановление каждого файла в свою директорию
+	for file in "$@"
+	do
+		check_file "$file"
+		if [ "$?" -ne 0 ]; then
+			continue
+		fi
+
+		name=$(echo $file | awk -F":" '{print $1}')
+		path=$(echo "$file" | awk '{gsub(":", "/");  print}' | awk '{print substr($0, 1, length($0)-7)}' | awk -F'_' '{print $NF}')
+
+		tar -xzf $current_directory/$file -C $path
+		if [ "$?" -eq 2 ] && [ "$check_v" == "true" ]; then
+			echo 'Cannot open: Permission denied'
+			continue
+		elif [ "$?" -eq 2 ]; then
+			continue
+		fi
+
+		rm -rf $current_directory/$file
+		if [ "$check_v" == "true" ]; then 
+			echo "restore: $file"
+		fi
+
+	done
+}
+
+
+case $1 in
+	-r)
+		if [ "$#" -eq 1 ]; then
+			echo "no filename"
+			exit
+		fi
+		shift
+		if [ "$1" == "-v" ]; then
+			check_v=true
+			shift
+		fi
+		remove "$@"
+		;;
+	-rv | -vr)
+		[ "$#" -eq 1 ] && echo "no filename" && exit
+		check_v=true
+		shift
+		remove "$@"
+		;;
+
+
+	-u)
+		if [ "$#" -eq 1 ]; then
+			echo "no filename"
+			exit
+		fi
+		shift
+		if [ "$1" == "-v" ]; then
+			check_v=true
+			shift
+		fi
+		restore "$@"
+		;;
+	-uv | -vu)
+		[ "$#" -eq 1 ] && echo "no filename" && exit
+		check_v=true
+		shift
+		restore "$@"
+		;;
+
+
+	-v)
+		if [ "$#" -eq 1 ]; then
+			echo "no filename"
+			exit
+		fi
+		shift
+		if [ "$1" == "-r" ]; then
+			check_v=true
+			shift
+			remove "$@"
+			exit
+		elif [ "$1" == "-u" ]; then
+			check_v=true
+			shift
+			restore "$@"
+			exit
+		fi
+		check_v=true
+		remove_and_save "$@"
+		;;
+
+#	-h) [ "$#" -gt 1 ] && echo "too many arguments" && exit
+#		echo "rr [-rh]"
+#		;;
+
+	 *) remove_and_save "$@"
+		;;
+
+	esac
+
+
+
+
+
