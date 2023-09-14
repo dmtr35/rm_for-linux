@@ -1,14 +1,19 @@
-#!/bin/bash -x 
+#!/bin/bash
 
-#current_directory="$PWD"
-#current_change=$(echo $PWD | awk '{gsub("/", ":"); print}')
-#current_change=$($file | awk '{gsub("/", ":"); print}')
+if [ -n "$SUDO_USER" ]; then
+    # Если скрипт запущен с sudo, используйте $SUDO_USER
+    user="$SUDO_USER"
+    home=$(eval echo ~$user)
+else
+    # В противном случае используйте текущего пользователя
+    user="$USER"
+    home="$HOME"
+fi
+
 date="$(date +'%d-%m-%Y_%H-%M-%S')"
-id="$SUDO_USER"
-HOME=$(eval echo ~$SUDO_USER)
-trash="$HOME/my_trash"
+trash="$home/.my_trash"
 hash -r
-rm="$(which -a rm | grep -v home | awk 'NR==1 {print}')"
+rm="$(which -a rm | grep -v '/usr/local/bin/rm' | awk 'NR==1 {print}')"
 
 # проверка есть ли корзина, и создать если нет 
 if [ ! -d "$trash" ]; then
@@ -18,14 +23,14 @@ fi
 [ "$#" -eq 0 ] && echo "no filename" && exit
 
 
-check_trash() {
+checkTrash() {
 		if [ -d "$file" ] && [ "$file" == "$trash" ]; then
 		$rm -rf $trash/*
 		return 1 
 	fi
 }
 
-check_file() {
+checkFile() {
 	if [ ! -e "$file" ] && [ ! -L "$file" ] && [ "$check_v" == "true" ]; then
 		echo "Файл '$file' не существует."
 		return 1
@@ -36,29 +41,29 @@ check_file() {
 }
 
 
-remove_and_save() {
+removeAndSave() {
 	if [ "$#" -ge 1 ]; then
 		# цикл на перемещение и удаление файла
 		for file in "$@"
 		do
 			filePath=$(realpath -s $file)
-			fileName=$(echo $filePath | awk -F"/" '{print $NF}')
-			current_change=$(echo $filePath | awk '{gsub("/", ":"); print}')
-			fileName_date="${fileName}:${date}"
-			check_trash "$filePath"
+			fileName=$(basename $filePath)
+			currentChange=$(echo $filePath | awk '{gsub("/", "-"); print}')
+			fileNameDate="${fileName}____${date}"
+			checkTrash "$filePath"
 			if [ "$?" -eq 1 ]; then
 				continue 
 			fi
-			check_file "$filePath"
+			checkFile "$filePath"
 			if [ "$?" -ne 0 ]; then
 				continue
 			fi
 			# перед перемещением файла, переименовываем его, добавляя дату
-			tar -czf /$trash/${fileName_date}_${current_change}.tar.gz --absolute-names $filePath
+			tar -czf /$trash/${fileNameDate}_${currentChange}.tar.gz --absolute-names $filePath
 
 			$rm -rf "$filePath"
 			if [ "$?" -ne 0 ] && [ "$check_v" == "true" ]; then
-				$rm -rf $trash/${fileName_date}_${current_change}.tar.gz $filePath
+				$rm -rf $trash/${fileNameDate}_${currentChange}.tar.gz $filePath
 				echo 'Permission denied'
 				continue
 			elif [ "$check_v" == "true" ]; then
@@ -72,21 +77,20 @@ remove() {
 	# цикл на удаление файлов, без сохранения
 	for file in "$@"
 	do
-		file=$(realpath -s $file)
-		check_trash "$file"
+		filePath=$(realpath -s $file)
+		fileName=$(basename $filePath)
+		checkTrash "$filePath"
 		if [ "$?" -eq 1 ]; then
 			continue 
 		fi
-		check_file "$file"
+		checkFile "$filePath"
 		if [ "$?" -ne 0 ]; then
 			continue
 		fi
-		$rm -rf "$file"
+		$rm -rf "$filePath"
 		if [ "$check_v" == "true" ]; then 
-			echo "removed: $file"
+			echo "removed: $fileName"
 		fi
-
-
 	done
 }
 
@@ -94,16 +98,18 @@ restore() {
 	# цикл на восстановление каждого файла в свою директорию
 	for file in "$@"
 	do
-		file=$(realpath -s $file)
-		check_file "$file"
+		filePath=$(realpath -s $file)
+		fileName=$(basename $filePath)
+		restoreFilePathAll=$(echo "$fileName" | awk '{gsub("-", "/"); print}' | awk '{print substr($0, 1, length($0)-7)}' | awk -F'_' '{print $NF}')
+	  restoreFileName=$(basename $restoreFilePathAll)
+	  restoreFilePath=$(dirname $restoreFilePathAll)
+
+		checkFile "$filePath"
 		if [ "$?" -ne 0 ]; then
 			continue
 		fi
 
-		name=$(echo $file | awk -F":" '{print $1}')
-		path=$(echo "$file" | awk '{gsub(":", "/");  print}' | awk '{print substr($0, 1, length($0)-7)}' | awk -F'_' '{print $NF}')
-
-		tar -xzf $current_directory/$file -C $path
+		tar -xzf $filePath --absolute-names -C $restoreFilePath
 		if [ "$?" -eq 2 ] && [ "$check_v" == "true" ]; then
 			echo 'Cannot open: Permission denied'
 			continue
@@ -111,9 +117,9 @@ restore() {
 			continue
 		fi
 
-		rm -rf $current_directory/$file
+		rm -rf $filePath
 		if [ "$check_v" == "true" ]; then 
-			echo "restore: $file"
+			echo "file: $restoreFileName => restored: $restoreFilePathAll"
 		fi
 
 	done
@@ -179,14 +185,28 @@ case $1 in
 			exit
 		fi
 		check_v=true
-		remove_and_save "$@"
+		removeAndSave "$@"
 		;;
 
-#	-h) [ "$#" -gt 1 ] && echo "too many arguments" && exit
-#		echo "rr [-rh]"
-#		;;
+	-h | --help) 
+		[ "$#" -gt 1 ] && echo "too many arguments" && exit
+		echo "
+DESCRIPTION
+   put the program in /usr/local/bin/
+SYNOPSIS
+   rm [OPTION]... [FILE]...				
+OPTIONS
+   -r: without saving the file, normal deletion without recovery
 
-	 *) remove_and_save "$@"
+   -u: files that were saved in the /home/<user>/.my_trash directory are restored using -u
+       
+   -v: receive a report on completed work
+
+   -h,--help: help
+"
+		;;
+
+	 *) removeAndSave "$@"
 		;;
 
 	esac
